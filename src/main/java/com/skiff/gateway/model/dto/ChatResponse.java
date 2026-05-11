@@ -17,6 +17,9 @@ public class ChatResponse {
     /** 实际使用的模型名称 */
     private String model;
 
+    /** 会话ID，用于多轮对话 */
+    private String conversationId;
+
     /** 响应时间戳（毫秒） */
     private long timestamp;
 }
