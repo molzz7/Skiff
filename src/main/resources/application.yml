@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: skiff-gateway
+  profiles:
+    active: dev
+  config:
+    import: optional:application-local.yml
+
+server:
+  port: 8080
+
+# ══════════════════════════════════════════════════════
+# 默认配置，仅供开发/演示使用
+# 真实 API Key 和模型请在 application-local.yml 中配置
+# (首次使用请复制 application-local.example.yml 并重命名)
+# ══════════════════════════════════════════════════════
+skiff:
+  model:
+    base-url: https://api.n1n.ai/v1
+    api-key: ${N1N_API_KEY:}
+    name: gpt-4o
+    temperature: 0.7
+    timeout: 60s

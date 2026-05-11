@@ -1,0 +1,59 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+
+# Build
+target/
+out/
+build/
+*.log
+*.tmp
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+pom.xml.tag
+pom.xml.releaseBackup
+
+# Gradle
+.gradle/
+gradle/
+gradlew
+gradlew.bat
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+
+# Environment & Secrets
+.env
+*.key
+*.pem
+*.crt
+application-local.yml
+application-dev.yml
+bootstrap-local.yml
+
+# Logs
+logs/
+*.log
+*.gz
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# 临时文件
+*.swp
+*.swo
+*~
