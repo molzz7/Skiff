@@ -1,6 +1,7 @@
 package com.skiff.gateway.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
@@ -37,16 +38,24 @@ public class LangChain4jConfig {
     /** 同步聊天模型 */
     @Bean
     public ChatModel chatModel() {
+        JdkHttpClientBuilder httpBuilder = new JdkHttpClientBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .readTimeout(timeout);
         return OpenAiChatModel.builder()
+                .httpClientBuilder(httpBuilder)
                 .baseUrl(baseUrl).apiKey(apiKey).modelName(modelName)
-                .temperature(temperature).timeout(timeout)
+                .temperature(temperature).timeout(timeout).maxRetries(1)
                 .build();
     }
 
     /** 流式聊天模型 */
     @Bean
     public StreamingChatModel streamingChatModel() {
+        JdkHttpClientBuilder httpBuilder = new JdkHttpClientBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .readTimeout(timeout);
         return OpenAiStreamingChatModel.builder()
+                .httpClientBuilder(httpBuilder)
                 .baseUrl(baseUrl).apiKey(apiKey).modelName(modelName)
                 .temperature(temperature).timeout(timeout)
                 .build();

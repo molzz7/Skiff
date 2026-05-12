@@ -1,3 +1,6 @@
+server:
+  port: 8080
+
 spring:
   application:
     name: skiff-gateway
@@ -5,6 +8,7 @@ spring:
     active: dev
   config:
     import: optional:application-local.yml
+  mandatory-file-encoding: UTF-8
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -15,9 +19,8 @@ spring:
           max-active: 8
           max-idle: 8
           min-idle: 2
-
-server:
-  port: 8080
+  codec:
+    max-in-memory-size: 512KB
 
 skiff:
   model:
