@@ -20,6 +20,12 @@ public class ChatResponse {
     /** 会话ID，用于多轮对话 */
     private String conversationId;
 
+    /** 本条回复消耗的 token 数 */
+    private Integer tokenCount;
+
+    /** 当前会话已用 token 总数 */
+    private Integer totalTokens;
+
     /** 响应时间戳（毫秒） */
     private long timestamp;
 }

@@ -8,7 +8,6 @@
 </head>
 <body>
     <div id="app">
-        <!-- 侧边栏 -->
         <aside id="sidebar">
             <button id="btn-new-chat" class="btn-new">+ 新对话</button>
             <div id="conversation-list"></div>
@@ -20,21 +19,27 @@
             </div>
         </aside>
 
-        <!-- 主区域 -->
         <main id="chat-area">
             <div id="chat-header">
                 <span id="current-model"></span>
+                <span id="token-bar"></span>
             </div>
             <div id="messages"></div>
             <div id="input-box">
                 <div class="input-row">
-                    <!-- 文件上传占位钩子 -->
                     <button id="btn-file" class="btn-icon" title="上传文件 (即将支持)" disabled>📎</button>
                     <button id="btn-image" class="btn-icon" title="上传图片 (即将支持)" disabled>🖼</button>
                     <textarea id="user-input" rows="1" placeholder="输入消息，Enter发送，Shift+Enter换行"></textarea>
                     <button id="btn-send" class="btn-send">发送</button>
                 </div>
-                <div class="input-hint">流式模式 · 对话自动记忆</div>
+                <div class="input-footer">
+                    <div id="model-selector">
+                        <select id="model-select">
+                            <option value="">加载中...</option>
+                        </select>
+                    </div>
+                    <div class="input-hint" id="stream-hint">流式模式 · 对话自动记忆</div>
+                </div>
             </div>
         </main>
     </div>

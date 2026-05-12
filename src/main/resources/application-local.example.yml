@@ -1,13 +1,5 @@
 # ══════════════════════════════════════════════════════
 # 本地配置模板 — 复制为 application-local.yml 后填入真实值
-# 此文件可提交到 Git，application-local.yml 已被 .gitignore 排除
-# ══════════════════════════════════════════════════════
-#
-# 使用方式:
-#   1. cp application-local.example.yml application-local.yml
-#   2. 修改 application-local.yml 中的 api-key 和 name
-#   3. 重启服务即可切换模型，无需改任何代码
-#
 # ══════════════════════════════════════════════════════
 
 skiff:
@@ -15,11 +7,12 @@ skiff:
     # 填入你的 n1n API Key (注册: https://n1n.ai)
     api-key: your-api-key-here
 
-    # 选择模型 (在 n1n 后台查看可用模型列表)
-    # 常见模型 ID:
-    #   gpt-4o             — OpenAI GPT-4o
-    #   gpt-4o-mini        — OpenAI GPT-4o Mini (轻量)
-    #   claude-3-5-sonnet  — Anthropic Claude 3.5 Sonnet
-    #   deepseek-chat      — DeepSeek V3
-    #   gemini-2.0-flash   — Google Gemini 2.0 Flash
-    name: deepseek-chat
+    # 默认模型
+    name: deepseek-v3-1
+
+    # 可用模型列表 (在 n1n 后台查看支持的模型 ID)
+    available:
+      - deepseek-v3-1
+      - gpt-4o
+      - deepseek-chat
+      - claude-3-5-sonnet

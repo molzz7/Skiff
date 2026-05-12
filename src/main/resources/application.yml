@@ -29,3 +29,11 @@ skiff:
     name: deepseek-v3-1
     temperature: 0.7
     timeout: 60s
+    available:
+      - deepseek-v3-1
+      - gpt-4o
+      - deepseek-chat
+  memory:
+    max-tokens: 8000
+    compress-threshold: 0.8
+    ttl-hours: 72

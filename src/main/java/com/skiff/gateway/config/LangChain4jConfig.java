@@ -1,16 +1,14 @@
 package com.skiff.gateway.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
-import dev.langchain4j.memory.chat.MessageWindowChatMemory;
-import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import com.skiff.gateway.service.memory.CompressingChatMemoryProvider;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
-import dev.langchain4j.service.AiServices;
+import dev.langchain4j.model.TokenCountEstimator;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiTokenCountEstimator;
+import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import dev.langchain4j.store.memory.chat.InMemoryChatMemoryStore;
-import com.skiff.gateway.service.chat.ChatAssistant;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,6 +18,12 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Duration;
 
+/**
+ * LangChain4j 核心配置
+ * <p>
+ * - ChatMemoryProvider → CompressingChatMemoryProvider（自动摘要压缩）
+ * - CompressorModel → 独立轻量模型，专门用于对话摘要
+ */
 @Slf4j
 @Configuration
 public class LangChain4jConfig {
@@ -28,65 +32,50 @@ public class LangChain4jConfig {
     private String baseUrl;
     @Value("${skiff.model.api-key}")
     private String apiKey;
-    @Value("${skiff.model.name}")
-    private String modelName;
-    @Value("${skiff.model.temperature}")
-    private Double temperature;
-    @Value("${skiff.model.timeout}")
-    private Duration timeout;
+    @Value("${skiff.memory.max-tokens:8000}")
+    private int maxTokens;
+    @Value("${skiff.memory.compress-threshold:0.8}")
+    private double compressThreshold;
+    @Value("${skiff.memory.ttl-hours:72}")
+    private long ttlHours;
 
-    /** 同步聊天模型 */
+    /** Token 估算器 */
     @Bean
-    public ChatModel chatModel() {
-        JdkHttpClientBuilder httpBuilder = new JdkHttpClientBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .readTimeout(timeout);
+    public TokenCountEstimator tokenCountEstimator() {
+        return new OpenAiTokenCountEstimator("gpt-4o");
+    }
+
+    /** 摘要压缩专用轻量模型 */
+    @Bean
+    public ChatModel compressorModel() {
         return OpenAiChatModel.builder()
-                .httpClientBuilder(httpBuilder)
-                .baseUrl(baseUrl).apiKey(apiKey).modelName(modelName)
-                .temperature(temperature).timeout(timeout).maxRetries(1)
+                .baseUrl(baseUrl).apiKey(apiKey)
+                .modelName("gpt-4o-mini")
+                .temperature(0.3)
+                .timeout(Duration.ofSeconds(30))
+                .maxRetries(1)
                 .build();
     }
 
-    /** 流式聊天模型 */
-    @Bean
-    public StreamingChatModel streamingChatModel() {
-        JdkHttpClientBuilder httpBuilder = new JdkHttpClientBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .readTimeout(timeout);
-        return OpenAiStreamingChatModel.builder()
-                .httpClientBuilder(httpBuilder)
-                .baseUrl(baseUrl).apiKey(apiKey).modelName(modelName)
-                .temperature(temperature).timeout(timeout)
-                .build();
-    }
-
-    /** ChatMemoryProvider — 有 Redis 则持久化，无则内存降级 */
+    /** ChatMemoryProvider — Redis 持久化 + TokenWindow + 自动摘要压缩 */
     @Bean
     public ChatMemoryProvider chatMemoryProvider(
             @Autowired(required = false) StringRedisTemplate redis,
-            ObjectMapper mapper) {
-        if (redis != null) {
-            log.info("ChatMemory mode: Redis (persistent, 30min TTL)");
-            RedisChatMemoryStore store = new RedisChatMemoryStore(redis, mapper);
-            return memoryId -> MessageWindowChatMemory.builder()
-                    .maxMessages(20).chatMemoryStore(store).id(memoryId).build();
-        }
-        log.info("ChatMemory mode: InMemory (no Redis, lost on restart)");
-        InMemoryChatMemoryStore store = new InMemoryChatMemoryStore();
-        return memoryId -> MessageWindowChatMemory.builder()
-                .maxMessages(20).chatMemoryStore(store).id(memoryId).build();
-    }
+            ObjectMapper mapper,
+            TokenCountEstimator estimator,
+            ChatModel compressorModel) {
 
-    /** AiServices 自动生成的 ChatAssistant 实现 */
-    @Bean
-    public ChatAssistant chatAssistant(ChatModel chatModel,
-                                        StreamingChatModel streamingChatModel,
-                                        ChatMemoryProvider memoryProvider) {
-        return AiServices.builder(ChatAssistant.class)
-                .chatModel(chatModel)
-                .streamingChatModel(streamingChatModel)
-                .chatMemoryProvider(memoryProvider)
-                .build();
+        ChatMemoryStore store;
+        if (redis != null) {
+            log.info("ChatMemory: Redis (TTL={}h) + TokenWindow({} tokens) + Auto-compress({:.0%})",
+                    ttlHours, maxTokens, compressThreshold);
+            store = new RedisChatMemoryStore(redis, mapper, Duration.ofHours(ttlHours));
+        } else {
+            log.info("ChatMemory: InMemory + TokenWindow({} tokens) + Auto-compress({:.0%})",
+                    maxTokens, compressThreshold);
+            store = new InMemoryChatMemoryStore();
+        }
+
+        return new CompressingChatMemoryProvider(store, estimator, maxTokens, compressThreshold, compressorModel);
     }
 }

@@ -16,22 +16,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Redis 持久化的 ChatMemoryStore
- * <p>
- * LangChain4j 的 ChatMemory 框架统一通过此接口存取对话历史，
- * 自动管理消息窗口大小（MessageWindowChatMemory），无需手动维护。
+ * Redis 持久化的 ChatMemoryStore，TTL 可配置
  */
 @Slf4j
 public class RedisChatMemoryStore implements ChatMemoryStore {
 
     private final StringRedisTemplate redis;
     private final ObjectMapper mapper;
+    private final Duration ttl;
     private static final String KEY_PREFIX = "skiff:memory:";
-    private static final Duration TTL = Duration.ofMinutes(30);
 
-    public RedisChatMemoryStore(StringRedisTemplate redis, ObjectMapper mapper) {
+    public RedisChatMemoryStore(StringRedisTemplate redis, ObjectMapper mapper, Duration ttl) {
         this.redis = redis;
         this.mapper = mapper;
+        this.ttl = ttl;
     }
 
     @Override
@@ -53,7 +51,7 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         try {
             List<Map<String, String>> raw = messages.stream().map(this::toMap).toList();
-            redis.opsForValue().set(KEY_PREFIX + memoryId, mapper.writeValueAsString(raw), TTL);
+            redis.opsForValue().set(KEY_PREFIX + memoryId, mapper.writeValueAsString(raw), ttl);
         } catch (Exception e) {
             log.error("Failed to serialize session {}", memoryId, e);
         }
@@ -62,7 +60,6 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
     @Override
     public void deleteMessages(Object memoryId) {
         redis.delete(KEY_PREFIX + memoryId);
-        log.debug("Deleted session memory: {}", memoryId);
     }
 
     private Map<String, String> toMap(ChatMessage msg) {
@@ -75,7 +72,7 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
         if (msg instanceof AiMessage am) {
             return Map.of("type", "AI", "text", am.text() != null ? am.text() : "");
         }
-        throw new IllegalArgumentException("Unsupported message type: " + msg.type());
+        throw new IllegalArgumentException("Unsupported type: " + msg.type());
     }
 
     private ChatMessage toMessage(Map<String, String> map) {
