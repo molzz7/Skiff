@@ -1,93 +1,244 @@
 /**
- * Skiff AI Chat — 多模型 + Token 监控 + 流式/非流式
+ * 轻舟 Skiff AI Chat
  */
+console.log('[Skiff] JS loaded');
 (function () {
     var STORAGE_KEY = 'skiff_conversations';
 
-    // DOM
-    var btnNew = document.getElementById('btn-new-chat');
-    var convList = document.getElementById('conversation-list');
-    var messagesEl = document.getElementById('messages');
-    var userInput = document.getElementById('user-input');
-    var btnSend = document.getElementById('btn-send');
-    var toggleStream = document.getElementById('toggle-stream');
-    var modelSpan = document.getElementById('current-model');
-    var modelSelect = document.getElementById('model-select');
-    var tokenBar = document.getElementById('token-bar');
+    var btnNew, convList, messagesEl, userInput, btnSend, toggleStream,
+        modelSpan, modelSelect, tokenBar,
+        btnSettings, overlay, btnClose,
+        setApiKey, setBaseUrl, setSearch, myModels, searchResults,
+        btnTest, testResult, btnSave,
+        btnFile, fileInput, btnRagToggle, btnClearKnowledge, docList;
 
-    // 状态
-    var conversations = [];
-    var activeConvId = null;
-    var isStreaming = false;
-    var selectedModel = '';
-    var maxTokens = 8000;
+    var conversations = [], activeConvId = null, isStreaming = false, ragMode = false,
+        selectedModel = '', maxTokens = 8000, userModels = [], searchTimer = null;
+
+    // ==================== DOM 查询 ====================
+    function $id(id) { return document.getElementById(id); }
+
+    function queryDom() {
+        btnNew = $id('btn-new-chat'); convList = $id('conversation-list');
+        messagesEl = $id('messages'); userInput = $id('user-input');
+        btnSend = $id('btn-send'); toggleStream = $id('toggle-stream');
+        modelSpan = $id('current-model'); modelSelect = $id('model-select');
+        tokenBar = $id('token-bar');
+        btnSettings = $id('btn-settings'); overlay = $id('settings-overlay');
+        btnClose = $id('btn-close-settings');
+        setApiKey = $id('set-apikey'); setBaseUrl = $id('set-baseurl');
+        setSearch = $id('set-model-search'); myModels = $id('my-models');
+        searchResults = $id('search-results');
+        btnTest = $id('btn-test-conn'); testResult = $id('test-result');
+        btnSave = $id('btn-save-settings');
+        btnFile = $id('btn-file'); fileInput = $id('file-input');
+        btnRagToggle = $id('btn-rag-toggle'); btnClearKnowledge = $id('btn-clear-knowledge');
+        docList = $id('document-list');
+    }
+
+    // ==================== 事件绑定（立即生效） ====================
+    function bindEvents() {
+        if (btnSettings) btnSettings.onclick = function () { overlay && overlay.classList.remove('hidden'); };
+        if (btnClose) btnClose.onclick = function () { overlay && overlay.classList.add('hidden'); };
+        if (btnNew) btnNew.onclick = newConversation;
+        if (btnSend) btnSend.onclick = sendMessage;
+        if (userInput) {
+            userInput.onkeydown = function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+            userInput.oninput = function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 160) + 'px'; };
+        }
+        if (toggleStream) toggleStream.onchange = function () {
+            var h = $id('stream-hint'); if (h) h.textContent = this.checked ? '流式模式 · 对话自动记忆' : '普通模式 · 对话自动记忆';
+        };
+        if (modelSelect) modelSelect.onchange = function () { selectedModel = this.value; updateModelDisplay(); };
+        if (setSearch) setSearch.oninput = function () {
+            clearTimeout(searchTimer);
+            var q = this.value.trim();
+            if (q.length < 1 && searchResults) { searchResults.innerHTML = ''; return; }
+            searchTimer = setTimeout(function () { doSearch(q); }, 300);
+        };
+        if (btnTest) btnTest.onclick = testConnection;
+        if (btnSave) btnSave.onclick = saveSettings;
+        if (btnFile && fileInput) {
+            btnFile.onclick = function () { fileInput.click(); };
+            fileInput.onchange = uploadFile;
+        }
+        if (btnRagToggle) btnRagToggle.onclick = function () {
+            ragMode = !ragMode;
+            btnRagToggle.classList.toggle('active', ragMode);
+            updateModelDisplay();
+        };
+        if (btnClearKnowledge) btnClearKnowledge.onclick = async function () {
+            await fetch('/api/knowledge', { method: 'DELETE' });
+            ragMode = false;
+            if (btnRagToggle) btnRagToggle.classList.remove('active');
+            updateModelDisplay();
+            refreshDocList();
+        };
+        refreshDocList();
+    }
 
     // ==================== 初始化 ====================
     async function init() {
-        await loadModels();
+        queryDom(); bindEvents();
+        await loadSettings();
         loadConversations();
-        if (conversations.length === 0) { newConversation(); }
-        else { switchConversation(conversations[0].id); }
+        if (conversations.length === 0) newConversation();
+        else switchConversation(conversations[0].id);
         renderConversationList();
         updateModelDisplay();
     }
 
-    // ==================== 模型加载 ====================
-    async function loadModels() {
+    // ==================== 设置 ====================
+    async function loadSettings() {
         try {
-            var resp = await fetch('/api/models');
-            var json = await resp.json();
-            if (json.code === 200 && json.data) {
-                var models = json.data.available || [];
-                var def = json.data.default || '';
-                modelSelect.innerHTML = '';
-                models.forEach(function (m) {
-                    var opt = document.createElement('option');
-                    opt.value = m; opt.textContent = m;
-                    if (m === def) opt.selected = true;
-                    modelSelect.appendChild(opt);
-                });
-                selectedModel = modelSelect.value || def;
+            var r = await fetch('/api/settings'), j = await r.json();
+            if (j.code === 200 && j.data) {
+                userModels = j.data.models || [];
+                if (setApiKey) setApiKey.value = j.data.apiKey || '';
+                if (setBaseUrl) setBaseUrl.value = j.data.baseUrl || '';
             }
-        } catch (e) { console.error('Failed to load models:', e); }
+        } catch (e) { console.error('loadSettings:', e); }
+        refreshModelSelect(); renderMyModels();
     }
 
-    modelSelect.onchange = function () { selectedModel = this.value; updateModelDisplay(); };
-
-    function updateModelDisplay() {
-        modelSpan.textContent = '模型: ' + selectedModel;
+    function refreshModelSelect() {
+        if (!modelSelect) return;
+        modelSelect.innerHTML = '';
+        if (userModels.length === 0) { modelSelect.innerHTML = '<option value="">无可用模型</option>'; return; }
+        userModels.forEach(function (m) {
+            var o = document.createElement('option'); o.value = m; o.textContent = m;
+            if (m === selectedModel || (userModels.length === 1 && !selectedModel)) o.selected = true;
+            modelSelect.appendChild(o);
+        });
+        selectedModel = modelSelect.value || userModels[0];
+        updateModelDisplay();
     }
 
-    // ==================== Token 条 ====================
+    function renderMyModels() {
+        if (!myModels) return;
+        myModels.innerHTML = '';
+        userModels.forEach(function (m) {
+            var tag = document.createElement('span'); tag.className = 'model-tag';
+            tag.innerHTML = m + '<span class="remove" data-model="' + m + '">×</span>';
+            myModels.appendChild(tag);
+        });
+        myModels.querySelectorAll('.remove').forEach(function (el) {
+            el.onclick = function () {
+                userModels = userModels.filter(function (x) { return x !== el.dataset.model; });
+                renderMyModels();
+            };
+        });
+    }
+
+    async function doSearch(q) {
+        if (!searchResults || !q) return;
+        try {
+            var r = await fetch('/api/settings/models/search?q=' + encodeURIComponent(q)), j = await r.json();
+            if (j.code !== 200 || !j.data) return;
+            searchResults.innerHTML = '';
+            j.data.forEach(function (m) {
+                var div = document.createElement('div'); div.className = 'model-item';
+                if (userModels.indexOf(m) >= 0) { div.innerHTML = '<span>' + m + '</span><span style="color:#8e8ea0;font-size:12px">已添加</span>'; }
+                else {
+                    div.innerHTML = '<span>' + m + '</span><span class="add">+</span>';
+                    div.querySelector('.add').onclick = function () { if (userModels.indexOf(m) < 0) { userModels.push(m); renderMyModels(); } };
+                }
+                searchResults.appendChild(div);
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    async function testConnection() {
+        if (!testResult) return;
+        testResult.textContent = '测试中...'; testResult.className = '';
+        try {
+            var r = await fetch('/api/settings/test-connection'), j = await r.json();
+            if (testResult) { testResult.textContent = j.data.message; testResult.className = j.data.ok ? 'ok' : 'fail'; }
+        } catch (e) { if (testResult) { testResult.textContent = '请求失败: ' + e.message; testResult.className = 'fail'; } }
+    }
+
+    async function saveSettings() {
+        try {
+            var r = await fetch('/api/settings', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apiKey: setApiKey.value, baseUrl: setBaseUrl.value, models: userModels })
+            });
+            var j = await r.json();
+            if (j.code === 200) { overlay && overlay.classList.add('hidden'); refreshModelSelect(); newConversation(); }
+        } catch (e) { alert('保存失败: ' + e.message); }
+    }
+
+    function updateModelDisplay() { if (modelSpan) modelSpan.textContent = '模型: ' + selectedModel + (ragMode ? ' [RAG]' : ''); }
+
+    // ==================== 文档管理 ====================
+    async function refreshDocList() {
+        if (!docList) return;
+        try {
+            var r = await fetch('/api/knowledge'), j = await r.json();
+            if (j.code !== 200 || !j.data || j.data.length === 0) {
+                docList.innerHTML = '<div class="doc-empty">暂无文档</div>';
+                if (j.data && j.data.length === 0 && ragMode) { ragMode = false; if (btnRagToggle) btnRagToggle.classList.remove('active'); updateModelDisplay(); }
+                return;
+            }
+            docList.innerHTML = '';
+            j.data.forEach(function (d) {
+                var div = document.createElement('div'); div.className = 'doc-item';
+                div.innerHTML = '<span class="doc-name" title="' + d.fileName + '">' + d.fileName + '</span>' +
+                    '<span style="font-size:10px;color:#565656">' + d.chunks + '块</span>' +
+                    '<span class="doc-del" data-id="' + d.id + '">×</span>';
+                div.querySelector('.doc-del').onclick = function (e) {
+                    e.stopPropagation();
+                    deleteDoc(d.id);
+                };
+                docList.appendChild(div);
+            });
+        } catch (e) { docList.innerHTML = '<div class="doc-empty">加载失败</div>'; }
+    }
+
+    async function deleteDoc(id) {
+        await fetch('/api/knowledge/' + id, { method: 'DELETE' });
+        refreshDocList();
+    }
+
+    // ==================== 文件上传 ====================
+    async function uploadFile() {
+        var file = fileInput.files[0]; if (!file) return;
+        var formData = new FormData(); formData.append('file', file);
+        try {
+            var r = await fetch('/api/knowledge/upload', { method: 'POST', body: formData });
+            var j = await r.json();
+            if (j.code === 200 && j.data) {
+                ragMode = true;
+                if (btnRagToggle) btnRagToggle.classList.add('active');
+                updateModelDisplay();
+                refreshDocList();
+                appendBubble('system', '已上传: ' + j.data.fileName + '\n文档ID: ' + j.data.documentId + '，RAG 模式已开启');
+            }
+        } catch (e) { alert('上传失败: ' + e.message); }
+        fileInput.value = '';
+    }
+
+    // ==================== Token ====================
     function renderTokenBar(totalTokens, maxTk) {
+        if (!tokenBar) return;
         if (maxTk) maxTokens = maxTk;
-        var pct = Math.min(100, Math.round((totalTokens / maxTokens) * 100));
+        var pct = Math.min(100, Math.round(totalTokens / maxTokens * 100));
         var cls = pct > 90 ? 'danger' : (pct > 70 ? 'warning' : '');
         var rem = Math.max(0, maxTokens - totalTokens);
-        tokenBar.innerHTML =
-            '<span class="token-text">' + totalTokens + ' / ' + maxTokens + ' tok</span>' +
-            '<div class="token-progress">' +
-              '<div class="token-progress-fill ' + cls + '" style="width:' + pct + '%"></div>' +
-            '</div>' +
+        tokenBar.innerHTML = '<span class="token-text">' + totalTokens + '/' + maxTokens + ' tok</span>' +
+            '<div class="token-progress"><div class="token-progress-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
             '<span class="token-text">剩' + rem + '</span>';
     }
 
     async function refreshTokens() {
         if (!activeConvId) return;
         try {
-            var resp = await fetch('/api/chat/session/' + activeConvId + '/tokens');
-            var json = await resp.json();
-            if (json.code === 200 && json.data) {
-                renderTokenBar(json.data.totalTokens, json.data.maxTokens);
-                // 给已有消息补上 token 数
-                if (json.data.messages) {
-                    json.data.messages.forEach(function (m) {
-                        var el = document.getElementById('msg-tokens-' + m.index);
-                        if (el && m.tokens > 0) {
-                            el.textContent = m.tokens + ' tok';
-                        }
-                    });
-                }
+            var r = await fetch('/api/chat/session/' + activeConvId + '/tokens'), j = await r.json();
+            if (j.code === 200 && j.data) {
+                renderTokenBar(j.data.totalTokens, j.data.maxTokens);
+                if (j.data.messages) j.data.messages.forEach(function (m) {
+                    var el = $id('msg-tokens-' + m.index); if (el && m.tokens > 0) el.textContent = m.tokens + ' tok';
+                });
             }
         } catch (e) { /* ignore */ }
     }
@@ -95,236 +246,145 @@
     // ==================== 对话管理 ====================
     function newConversation() {
         var id = 'conv_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-        var conv = { id: id, title: '新对话', messages: [] };
-        conversations.unshift(conv);
+        conversations.unshift({ id: id, title: '新对话', messages: [] });
         activeConvId = id;
-        saveConversations();
-        renderConversationList();
-        renderMessages();
-        renderTokenBar(0, maxTokens);
-        userInput.focus();
+        saveConversations(); renderConversationList(); renderMessages();
+        renderTokenBar(0, maxTokens); if (userInput) userInput.focus();
     }
 
     function switchConversation(id) {
-        activeConvId = id;
-        renderConversationList();
-        renderMessages();
-        refreshTokens();
-        userInput.focus();
+        activeConvId = id; renderConversationList(); renderMessages(); refreshTokens();
+        if (userInput) userInput.focus();
     }
 
-    function loadConversations() {
-        try { conversations = JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
-        catch (e) { conversations = []; }
-    }
-
-    function saveConversations() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-    }
-
-    function getActiveConv() {
-        return conversations.find(function (c) { return c.id === activeConvId; });
-    }
+    function loadConversations() { try { conversations = JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch (e) { conversations = []; } }
+    function saveConversations() { localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations)); }
+    function getActiveConv() { return conversations.find(function (c) { return c.id === activeConvId; }); }
 
     function renderConversationList() {
+        if (!convList) return;
         convList.innerHTML = '';
         conversations.forEach(function (conv) {
             var div = document.createElement('div');
             div.className = 'conv-item' + (conv.id === activeConvId ? ' active' : '');
-            div.textContent = conv.title || '新对话';
             div.onclick = function () { switchConversation(conv.id); };
-            convList.appendChild(div);
+            var t = document.createElement('span'); t.className = 'conv-title'; t.textContent = conv.title || '新对话';
+            var d = document.createElement('button'); d.className = 'conv-delete'; d.textContent = '\u00D7';
+            d.onclick = function (e) { e.stopPropagation(); deleteConversation(conv.id); };
+            div.appendChild(t); div.appendChild(d); convList.appendChild(div);
         });
+    }
+
+    function deleteConversation(id) {
+        fetch('/api/chat/session/' + id, { method: 'DELETE' }).catch(function () {});
+        conversations = conversations.filter(function (c) { return c.id !== id; });
+        if (id === activeConvId) { conversations.length > 0 ? switchConversation(conversations[0].id) : newConversation(); }
+        saveConversations(); renderConversationList();
     }
 
     // ==================== 消息渲染 ====================
     function renderMessages() {
-        var conv = getActiveConv();
-        messagesEl.innerHTML = '';
-        if (conv && conv.messages.length > 0) {
-            conv.messages.forEach(function (msg, i) {
-                appendMessageBubble(msg.role, msg.content, msg.model, i, msg.tokens);
-            });
-        }
+        if (!messagesEl) return;
+        var conv = getActiveConv(); messagesEl.innerHTML = '';
+        if (conv && conv.messages.length > 0) conv.messages.forEach(function (msg, i) { appendBubble(msg.role, msg.content, msg.model, i, msg.tokens); });
         scrollBottom();
     }
 
-    function appendMessageBubble(role, content, model, index, tokens) {
-        var row = document.createElement('div');
-        row.className = 'message-row ' + role;
-        var avatar = document.createElement('div');
-        avatar.className = 'msg-avatar';
-        avatar.textContent = role === 'user' ? 'U' : 'A';
-        var wrap = document.createElement('div');
-        wrap.style.flex = '1';
-        var text = document.createElement('div');
-        text.className = 'msg-content';
-        text.textContent = content || '';
-        wrap.appendChild(text);
-
-        // 元信息：模型 + token
-        var meta = document.createElement('div');
-        meta.className = 'msg-meta';
-        if (model && role === 'assistant') {
-            var m = document.createElement('span');
-            m.textContent = model;
-            meta.appendChild(m);
-        }
-        var tok = document.createElement('span');
-        tok.id = 'msg-tokens-' + (typeof index !== 'undefined' ? index : '');
-        tok.textContent = (tokens && tokens > 0) ? tokens + ' tok' : '';
-        meta.appendChild(tok);
-        wrap.appendChild(meta);
-
-        row.appendChild(avatar);
-        row.appendChild(wrap);
-        messagesEl.appendChild(row);
-        scrollBottom();
-        return text;
+    function appendBubble(role, content, model, index, tokens) {
+        var row = document.createElement('div'); row.className = 'message-row ' + role;
+        var av = document.createElement('div'); av.className = 'msg-avatar';
+        av.textContent = role === 'user' ? 'U' : (role === 'system' ? 'K' : 'A');
+        var wrap = document.createElement('div'); wrap.style.flex = '1';
+        var txt = document.createElement('div'); txt.className = 'msg-content'; txt.textContent = content || '';
+        wrap.appendChild(txt);
+        var meta = document.createElement('div'); meta.className = 'msg-meta';
+        if (model && role === 'assistant') { var ms = document.createElement('span'); ms.textContent = model; meta.appendChild(ms); }
+        var tok = document.createElement('span'); tok.id = 'msg-tokens-' + index; tok.textContent = (tokens > 0) ? tokens + ' tok' : '';
+        meta.appendChild(tok); wrap.appendChild(meta); row.appendChild(av); row.appendChild(wrap);
+        messagesEl.appendChild(row); scrollBottom();
+        return txt;
     }
 
-    function setStreamingCursor(el, active) {
-        if (active) el.classList.add('streaming');
-        else el.classList.remove('streaming');
-    }
-
-    function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+    function scrollBottom() { if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight; }
+    function setStreaming(el, on) { if (el) { on ? el.classList.add('streaming') : el.classList.remove('streaming'); } }
 
     // ==================== 发送消息 ====================
     async function sendMessage() {
         if (isStreaming) return;
-        var message = userInput.value.trim();
-        if (!message) return;
-        var conv = getActiveConv();
-        if (!conv) return;
-
-        if (conv.messages.length === 0) {
-            conv.title = message.substring(0, 30);
-            saveConversations();
-            renderConversationList();
-        }
-
-        var msgIndex = conv.messages.length;
-        conv.messages.push({ role: 'user', content: message });
-        appendMessageBubble('user', message, null, msgIndex, null);
-        userInput.value = ''; userInput.style.height = 'auto';
+        var msg = userInput ? userInput.value.trim() : ''; if (!msg) return;
+        var conv = getActiveConv(); if (!conv) return;
+        if (conv.messages.length === 0) { conv.title = msg.substring(0, 30); saveConversations(); renderConversationList(); }
+        conv.messages.push({ role: 'user', content: msg });
+        appendBubble('user', msg);
+        if (userInput) { userInput.value = ''; userInput.style.height = 'auto'; }
         saveConversations();
-
-        var asstIndex = conv.messages.length;
-        var assistantMsg = { role: 'assistant', content: '', model: selectedModel, tokens: 0 };
-        conv.messages.push(assistantMsg);
-        saveConversations();
-        var assistantEl = appendMessageBubble('assistant', '', selectedModel, asstIndex, 0);
-
+        var aIdx = conv.messages.length, aMsg = { role: 'assistant', content: '', model: selectedModel, tokens: 0 };
+        conv.messages.push(aMsg); saveConversations();
+        var aEl = appendBubble('assistant', '', selectedModel, aIdx, 0);
         setSending(true);
-        if (toggleStream.checked) {
-            await streamChat(message, conv.id, assistantMsg, assistantEl, asstIndex);
+        if (ragMode) {
+            await ragChat(msg, conv.id, aMsg, aEl, aIdx);
+        } else if (toggleStream && toggleStream.checked) {
+            await streamChat(msg, conv.id, aMsg, aEl, aIdx);
         } else {
-            await normalChat(message, conv.id, assistantMsg, assistantEl, asstIndex);
+            await normalChat(msg, conv.id, aMsg, aEl, aIdx);
         }
-        setSending(false);
-        refreshTokens();
-        userInput.focus();
+        setSending(false); refreshTokens(); if (userInput) userInput.focus();
     }
 
-    function setSending(sending) {
-        isStreaming = sending;
-        btnSend.disabled = sending;
-        userInput.disabled = sending;
-    }
+    function setSending(s) { isStreaming = s; if (btnSend) btnSend.disabled = s; if (userInput) userInput.disabled = s; }
 
-    // ==================== 非流式 ====================
-    async function normalChat(message, conversationId, assistantMsg, assistantEl, index) {
+    async function normalChat(msg, cid, aMsg, aEl, idx) {
         try {
-            var resp = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: message, conversationId: conversationId, model: selectedModel })
-            });
-            var json = await resp.json();
-            if (json.code === 200 && json.data) {
-                assistantMsg.content = json.data.content;
-                assistantMsg.tokens = json.data.tokenCount || 0;
-                assistantEl.textContent = json.data.content;
-                updateMsgTokens(index, json.data.tokenCount || 0);
-                renderTokenBar(json.data.totalTokens || 0, maxTokens);
-                saveConversations();
-            } else {
-                assistantMsg.content = '[错误] ' + (json.message || '未知');
-                assistantEl.textContent = assistantMsg.content;
-                saveConversations();
+            var r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg, conversationId: cid, model: selectedModel }) });
+            var j = await r.json();
+            if (j.code === 200 && j.data) {
+                aMsg.content = j.data.content; aMsg.tokens = j.data.tokenCount || 0;
+                if (aEl) aEl.textContent = j.data.content;
+                updateMsgTokens(idx, j.data.tokenCount || 0);
+                renderTokenBar(j.data.totalTokens || 0, maxTokens); saveConversations();
             }
-        } catch (e) {
-            assistantMsg.content = '[网络错误] ' + e.message;
-            assistantEl.textContent = assistantMsg.content;
-            saveConversations();
-        }
+        } catch (e) { aMsg.content = '[错误] ' + e.message; if (aEl) aEl.textContent = aMsg.content; saveConversations(); }
     }
 
-    // ==================== 流式 ====================
-    async function streamChat(message, conversationId, assistantMsg, assistantEl, index) {
-        setStreamingCursor(assistantEl, true);
+    async function ragChat(msg, cid, aMsg, aEl, idx) {
         try {
-            var resp = await fetch('/api/chat/stream', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: message, conversationId: conversationId, model: selectedModel })
-            });
-            var reader = resp.body.getReader();
-            var decoder = new TextDecoder();
-            var buffer = '';
+            var r = await fetch('/api/chat/rag', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg, conversationId: cid, model: selectedModel }) });
+            var j = await r.json();
+            if (j.code === 200 && j.data) {
+                aMsg.content = j.data.content; aMsg.tokens = j.data.tokenCount || 0;
+                if (aEl) aEl.textContent = j.data.content;
+                updateMsgTokens(idx, j.data.tokenCount || 0);
+                renderTokenBar(j.data.totalTokens || 0, maxTokens); saveConversations();
+            }
+        } catch (e) { aMsg.content = '[错误] ' + e.message; if (aEl) aEl.textContent = aMsg.content; saveConversations(); }
+    }
+
+    async function streamChat(msg, cid, aMsg, aEl, idx) {
+        setStreaming(aEl, true);
+        try {
+            var r = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg, conversationId: cid, model: selectedModel }) });
+            var reader = r.body.getReader(), decoder = new TextDecoder(), buf = '';
             while (true) {
-                var r = await reader.read();
-                if (r.done) break;
-                buffer += decoder.decode(r.value, { stream: true });
-                var lines = buffer.split('\n');
-                buffer = lines.pop() || '';
+                var rd = await reader.read(); if (rd.done) break;
+                buf += decoder.decode(rd.value, { stream: true });
+                var lines = buf.split('\n'); buf = lines.pop() || '';
                 for (var i = 0; i < lines.length; i++) {
                     if (lines[i].indexOf('data:') === 0) {
-                        var token = lines[i].substring(5).trim();
-                        if (token) {
-                            assistantMsg.content += token;
-                            assistantEl.textContent = assistantMsg.content;
-                            scrollBottom();
-                        }
+                        var tok = lines[i].substring(5).trim();
+                        if (tok) { aMsg.content += tok; if (aEl) aEl.textContent = aMsg.content; scrollBottom(); }
                     }
                 }
             }
-            if (buffer.indexOf('data:') === 0) {
-                var token = buffer.substring(5).trim();
-                if (token) { assistantMsg.content += token; assistantEl.textContent = assistantMsg.content; }
-            }
-            // 估算 token 数 (~4 char/token)
-            assistantMsg.tokens = Math.ceil(assistantMsg.content.length / 4);
-            updateMsgTokens(index, assistantMsg.tokens);
-        } catch (e) {
-            assistantMsg.content += '\n[流式中断] ' + e.message;
-            assistantEl.textContent = assistantMsg.content;
-        } finally {
-            setStreamingCursor(assistantEl, false);
-            saveConversations();
-        }
+            if (buf.indexOf('data:') === 0) { aMsg.content += buf.substring(5).trim(); if (aEl) aEl.textContent = aMsg.content; }
+            aMsg.tokens = Math.ceil(aMsg.content.length / 4); updateMsgTokens(idx, aMsg.tokens);
+        } catch (e) { aMsg.content += '\n[流式中断] ' + e.message; if (aEl) aEl.textContent = aMsg.content; }
+        finally { setStreaming(aEl, false); saveConversations(); }
     }
 
-    function updateMsgTokens(index, tokens) {
-        var el = document.getElementById('msg-tokens-' + index);
-        if (el && tokens > 0) el.textContent = tokens + ' tok';
+    function updateMsgTokens(idx, tokens) {
+        var el = $id('msg-tokens-' + idx); if (el && tokens > 0) el.textContent = tokens + ' tok';
     }
-
-    // ==================== 事件 ====================
-    btnNew.onclick = newConversation;
-    btnSend.onclick = sendMessage;
-    userInput.onkeydown = function (e) {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    };
-    userInput.oninput = function () {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 160) + 'px';
-    };
-    toggleStream.onchange = function () {
-        document.getElementById('stream-hint').textContent =
-            this.checked ? '流式模式 · 对话自动记忆' : '普通模式 · 对话自动记忆';
-    };
 
     init();
 })();

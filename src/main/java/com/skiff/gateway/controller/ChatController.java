@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -20,24 +21,31 @@ public class ChatController {
     private final ChatService chatService;
     private final ChatMemoryService memoryService;
 
-    /** 非流式对话 */
     @PostMapping
     public Mono<ApiResponse<ChatResponse>> chat(@RequestBody ChatRequest request) {
-        return chatService.chat(request)
-                .map(ApiResponse::success);
+        return chatService.chat(request).map(ApiResponse::success);
     }
 
-    /** SSE 流式对话 */
+    /** RAG 知识库增强对话 */
+    @PostMapping("/rag")
+    public Mono<ApiResponse<ChatResponse>> ragChat(@RequestBody ChatRequest request) {
+        return chatService.ragChat(request).map(ApiResponse::success);
+    }
+
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> streamChat(@RequestBody ChatRequest request) {
         return chatService.streamChat(request);
     }
 
-    /** 获取会话 token 统计 */
     @GetMapping("/session/{conversationId}/tokens")
     public Mono<ApiResponse<TokenStats>> getTokens(@PathVariable String conversationId) {
         return Mono.fromCallable(() -> memoryService.getTokenStats(conversationId))
-                .map(ApiResponse::success)
-                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+                .map(ApiResponse::success).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @DeleteMapping("/session/{conversationId}")
+    public Mono<ApiResponse<Void>> deleteSession(@PathVariable String conversationId) {
+        return Mono.fromRunnable(() -> memoryService.clearSession(conversationId))
+                .subscribeOn(Schedulers.boundedElastic()).thenReturn(ApiResponse.success(null));
     }
 }

@@ -4,8 +4,11 @@ import com.skiff.gateway.model.dto.ChatRequest;
 import com.skiff.gateway.model.dto.ChatResponse;
 import com.skiff.gateway.service.model.ModelRegistry;
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.rag.content.Content;
+import dev.langchain4j.rag.content.retriever.ContentRetriever;
+import dev.langchain4j.rag.query.Query;
 import dev.langchain4j.service.TokenStream;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -14,18 +17,27 @@ import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
- * 聊天编排 — ModelRegistry 路由 + Token 统计
+ * 聊天编排 — ModelRegistry 路由 + Token 统计 + RAG
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ChatService {
 
     private final ModelRegistry modelRegistry;
     private final ChatMemoryService memoryService;
+    private final ContentRetriever contentRetriever;
+
+    public ChatService(ModelRegistry modelRegistry, ChatMemoryService memoryService,
+                        ContentRetriever contentRetriever) {
+        this.modelRegistry = modelRegistry;
+        this.memoryService = memoryService;
+        this.contentRetriever = contentRetriever;
+    }
 
     /** 非流式对话 */
     public Mono<ChatResponse> chat(ChatRequest request) {
@@ -37,19 +49,55 @@ public class ChatService {
             ChatAssistant assistant = modelRegistry.getAssistant(model);
             String result = assistant.chat(request.getMessage(), conversationId);
 
-            // 计算本条消息 token 和会话总量
-            int msgTokens = memoryService.estimateTokens(
-                    AiMessage.from(result));
+            int msgTokens = memoryService.estimateTokens(AiMessage.from(result));
             var stats = memoryService.getTokenStats(conversationId);
 
             return ChatResponse.builder()
-                    .content(result)
-                    .model(model)
-                    .conversationId(conversationId)
-                    .tokenCount(msgTokens)
-                    .totalTokens(stats.getTotalTokens())
-                    .timestamp(System.currentTimeMillis())
-                    .build();
+                    .content(result).model(model).conversationId(conversationId)
+                    .tokenCount(msgTokens).totalTokens(stats.getTotalTokens())
+                    .timestamp(System.currentTimeMillis()).build();
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** RAG 增强对话 — 检索知识库内容作为上下文注入 */
+    public Mono<ChatResponse> ragChat(ChatRequest request) {
+        return Mono.fromCallable(() -> {
+            String model = modelRegistry.resolveModel(request.getModel());
+            String conversationId = resolveConversationId(request);
+
+            // 检索相关文档片段
+            List<Content> contents = contentRetriever.retrieve(Query.from(request.getMessage()));
+            log.info("RAG retrieve query={} found={} results", request.getMessage(), contents.size());
+            for (int i = 0; i < contents.size(); i++) {
+                String snippet = contents.get(i).textSegment().text();
+                log.debug("RAG result[{}] text={}", i,
+                        snippet != null ? snippet.substring(0, Math.min(80, snippet.length())) : "null");
+            }
+            String context = contents.stream()
+                    .map(Content::textSegment)
+                    .map(TextSegment::text)
+                    .collect(Collectors.joining("\n---\n"));
+
+            // 组装增强 prompt
+            String augmentedMessage;
+            if (!context.isEmpty()) {
+                log.info("RAG chat model={} session={} retrieved={} chunks", model, conversationId, contents.size());
+                augmentedMessage = "参考资料：\n" + context + "\n\n用户问题：" + request.getMessage();
+            } else {
+                log.info("RAG chat model={} session={} no relevant docs found", model, conversationId);
+                augmentedMessage = request.getMessage();
+            }
+
+            ChatAssistant assistant = modelRegistry.getAssistant(model);
+            String result = assistant.chat(augmentedMessage, conversationId);
+
+            int msgTokens = memoryService.estimateTokens(AiMessage.from(result));
+            var stats = memoryService.getTokenStats(conversationId);
+
+            return ChatResponse.builder()
+                    .content(result).model(model).conversationId(conversationId)
+                    .tokenCount(msgTokens).totalTokens(stats.getTotalTokens())
+                    .timestamp(System.currentTimeMillis()).build();
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -69,7 +117,6 @@ public class ChatService {
                            .start());
     }
 
-    /** 计算单条消息 token 数 */
     public int estimateTokens(String text) {
         return memoryService.estimateTokens(AiMessage.from(text));
     }

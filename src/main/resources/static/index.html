@@ -3,46 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Skiff AI</title>
+    <title>轻舟 Skiff</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
     <div id="app">
         <aside id="sidebar">
+            <div id="sidebar-brand">
+                <img src="/logo.png" alt="轻舟 Skiff" id="brand-logo">
+            </div>
             <button id="btn-new-chat" class="btn-new">+ 新对话</button>
             <div id="conversation-list"></div>
+            <div id="document-list"></div>
             <div id="sidebar-footer">
                 <label class="stream-toggle">
                     <input type="checkbox" id="toggle-stream" checked>
                     <span>流式输出</span>
                 </label>
+                <button id="btn-settings" class="btn-icon-side" title="设置" onclick="document.getElementById('settings-overlay').classList.remove('hidden')">⚙</button>
             </div>
         </aside>
 
         <main id="chat-area">
             <div id="chat-header">
                 <span id="current-model"></span>
-                <span id="token-bar"></span>
+                <div id="token-area">
+                    <span id="token-bar"></span>
+                    <span id="token-note">达 6400 token 后自动压缩上下文</span>
+                </div>
             </div>
             <div id="messages"></div>
             <div id="input-box">
                 <div class="input-row">
-                    <button id="btn-file" class="btn-icon" title="上传文件 (即将支持)" disabled>📎</button>
+                    <button id="btn-file" class="btn-icon" title="上传文档 (PDF/Word/TXT)">📎</button>
+                    <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" style="display:none">
                     <button id="btn-image" class="btn-icon" title="上传图片 (即将支持)" disabled>🖼</button>
                     <textarea id="user-input" rows="1" placeholder="输入消息，Enter发送，Shift+Enter换行"></textarea>
                     <button id="btn-send" class="btn-send">发送</button>
                 </div>
                 <div class="input-footer">
                     <div id="model-selector">
-                        <select id="model-select">
-                            <option value="">加载中...</option>
-                        </select>
+                        <select id="model-select"><option value="">加载中...</option></select>
+                    </div>
+                    <div class="footer-actions">
+                        <button id="btn-rag-toggle" class="btn-rag-toggle" title="基于已上传文档的知识增强回答">知识库</button>
+                        <button id="btn-clear-knowledge" class="btn-rag-toggle" title="清空知识库">清空</button>
                     </div>
                     <div class="input-hint" id="stream-hint">流式模式 · 对话自动记忆</div>
                 </div>
             </div>
         </main>
     </div>
+
+    <!-- 设置面板 -->
+    <div id="settings-overlay" class="overlay hidden">
+        <div class="panel">
+            <div class="panel-header">
+                <span>设置</span>
+                <button id="btn-close-settings" class="btn-close" onclick="document.getElementById('settings-overlay').classList.add('hidden')">✕</button>
+            </div>
+            <div class="panel-body">
+                <label>API Key</label>
+                <input type="password" id="set-apikey" placeholder="sk-xxx">
+                <label>Base URL</label>
+                <input type="text" id="set-baseurl" placeholder="https://api.n1n.ai/v1">
+                <button id="btn-test-conn" class="btn-action">测试连接</button>
+                <span id="test-result"></span>
+
+                <hr>
+                <label>模型管理</label>
+                <div class="search-row">
+                    <input type="text" id="set-model-search" placeholder="搜索模型（模糊匹配）">
+                </div>
+                <div id="my-models" class="model-tags"></div>
+                <div id="search-results" class="model-list"></div>
+            </div>
+            <div class="panel-footer">
+                <button id="btn-save-settings" class="btn-action primary">保存</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/js/app.js"></script>
 </body>
 </html>

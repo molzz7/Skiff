@@ -61,6 +61,11 @@ public class ChatMemoryService {
         return estimator.estimateTokenCountInMessage(msg);
     }
 
+    /** 清除会话记忆 */
+    public void clearSession(String conversationId) {
+        memoryProvider.get(conversationId).clear();
+    }
+
     private String extractPreview(ChatMessage msg, int maxLen) {
         String text = null;
         if (msg instanceof UserMessage um) text = um.singleText();
